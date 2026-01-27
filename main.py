@@ -13,7 +13,7 @@ CHAT_ID = '6991113379'
 # 1. 나라장터 키 (공사 조회용)
 SERVICE_KEY = 'c2830ec3b623040f9ac01cb9a3980d1c3f6c949e9f4bd765adbfb2432c43b4ed'
 
-# 2. 퍼플렉시티 키 (사장님 키 확인 완료)
+# 2. 퍼플렉시티 키 (사장님 키)
 PPLX_API_KEY = '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'
 
 HEADERS = {
@@ -22,12 +22,12 @@ HEADERS = {
 
 seen_instagram = set()
 
-# --- [AI 기능: 모델 이름 수정 완료 (sonar-pro)] ---
+# --- [AI 기능: 모델 sonar-pro 유지] ---
 def ask_perplexity(system_role, user_prompt):
     url = "https://api.perplexity.ai/chat/completions"
     
     payload = {
-        "model": "sonar-pro", # ★ 여기가 핵심! 최신 모델명으로 변경 ★
+        "model": "sonar-pro", 
         "messages": [
             { "role": "system", "content": system_role },
             { "role": "user", "content": user_prompt }
@@ -41,17 +41,14 @@ def ask_perplexity(system_role, user_prompt):
     
     try:
         response = requests.post(url, json=payload, headers=headers, timeout=60)
-        
-        # 에러 발생 시 내용 출력
         if response.status_code != 200:
             return f"🚨 [AI 오류] {response.text}"
-            
         result = response.json()
         return result['choices'][0]['message']['content']
     except Exception as e:
         return f"⚠️ [시스템 에러]: {str(e)}"
 
-# 1. 나라장터 (공사) + 인기통 (AI)
+# 1. 나라장터 (공사) + 인기통 (AI 강력 모드)
 def get_info():
     msg = "📋 [나라장터 & 인기통 정보]\n\n"
     
@@ -92,11 +89,15 @@ def get_info():
 
     msg += "\n--------------------------------\n\n"
 
-    # (2) 인기통 (AI 검색)
-    msg += "🔥 [인기통 폴리싱 관련 글 (AI)]\n"
+    # (2) 인기통 (AI 프롬프트 강화)
+    msg += "🔥 [인기통/카페 폴리싱 구인]\n"
     inkitong_result = ask_perplexity(
-        "당신은 구인구직 정보 검색 비서입니다.",
-        "웹사이트 '인기통(inkitong.com)' 또는 한국 건설 관련 커뮤니티에서 '폴리싱' 또는 '바닥 시공' 관련 최신 게시글이나 구인 정보를 3~5개 찾아줘.\n반드시 '글 제목'과 '해당 글의 링크(URL)'를 함께 리스트 형식으로 출력해줘."
+        "당신은 건설 현장 구인구직 전문 검색원입니다.",
+        "다음 조건으로 검색해서 결과를 찾아줘:\n"
+        "1. 검색어: 'site:inkitong.com 폴리싱' 또는 'site:cafe.naver.com 폴리싱 구인'\n"
+        "2. 절대 잡코리아, 사람인, 알바몬 같은 일반 채용 사이트 결과는 포함하지 마.\n"
+        "3. 오직 '인기통(inkitong)' 사이트 내의 글이나 '네이버 카페'의 실제 현장 구인 글만 3~5개 찾아줘.\n"
+        "4. 결과는 '글 제목'과 '링크(URL)' 형식으로 깔끔하게 출력해."
     )
     msg += inkitong_result
     
@@ -160,7 +161,7 @@ def send_telegram(text):
 def monitor_commands():
     last_id = 0
     print("🚀 최종 봇 시작")
-    send_telegram("🚀 봇 업데이트 완료! 모델명을 최신(sonar-pro)으로 교체했습니다.")
+    send_telegram("🚀 봇 재시작 완료!\n이제 AI가 잡코리아를 무시하고 '인기통/카페' 위주로 검색합니다.")
     
     while True:
         try:
