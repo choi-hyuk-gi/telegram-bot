@@ -3,25 +3,61 @@ from bs4 import BeautifulSoup
 import time
 import threading
 import random
+import json
 from datetime import datetime, timedelta
-import re
 
 # --- [설정 정보] ---
 TOKEN = '8131864943:AAEE77BmAVdTqP06T2JcqIxhTKlCIemc-Ak'
 CHAT_ID = '6991113379'
-# 사장님 인증키 (나라장터용)
+
+# 1. 나라장터 키
 SERVICE_KEY = 'c2830ec3b623040f9ac01cb9a3980d1c3f6c949e9f4bd765adbfb2432c43b4ed'
+
+# 2. 퍼플렉시티 키 (AI)
+PPLX_API_KEY = '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'
 
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 }
 
-# 이미 본 인스타 게시물 저장용
 seen_instagram = set()
 
-# 1. 나라장터 (공사 공고)
+# --- [AI 기능: 퍼플렉시티에게 물어보기] ---
+def ask_perplexity(system_role, user_prompt):
+    url = "https://api.perplexity.ai/chat/completions"
+    
+    payload = {
+        "model": "llama-3.1-sonar-large-128k-online", 
+        "messages": [
+            {
+                "role": "system",
+                "content": system_role
+            },
+            {
+                "role": "user",
+                "content": user_prompt
+            }
+        ]
+    }
+    
+    headers = {
+        "Authorization": f"Bearer {PPLX_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    
+    try:
+        response = requests.post(url, json=payload, headers=headers, timeout=60)
+        result = response.json()
+        return result['choices'][0]['message']['content']
+    except Exception as e:
+        return f"⚠️ AI 연결 실패: {str(e)}"
+
+# 1. 나라장터 (공사 공고) + 인기통 (AI 검색)
 def get_info():
-    msg = "📋 [나라장터 공사 공고]\n"
+    msg = "📋 [나라장터 & 인기통 정보]\n\n"
+    
+    # (1) 나라장터 (기존 로직)
+    msg += "🏛️ [나라장터 공사 공고]\n"
     try:
         end_date = datetime.now().strftime('%Y%m%d0000')
         start_date = (datetime.now() - timedelta(days=180)).strftime('%Y%m%d0000')
@@ -39,133 +75,98 @@ def get_info():
         }
         
         res = requests.get(url, params=params, timeout=30)
-        
-        if res.status_code != 200:
-            msg += f"• 서버 점검 중 (코드: {res.status_code})\n"
+        if res.status_code == 200:
+            data = res.json()
+            items = data.get('response', {}).get('body', {}).get('items', [])
+            if items:
+                for i in items[:5]:
+                    title = i.get('bidNtceNm', '제목없음')
+                    link = i.get('bidNtceDtlUrl', '#')
+                    date = i.get('bidNtceDt', '')[:10]
+                    msg += f"• [{date}] {title}\n   🔗 {link}\n"
+            else:
+                msg += "• 검색된 공고가 없습니다.\n"
         else:
-            try:
-                data = res.json()
-                items = data.get('response', {}).get('body', {}).get('items', [])
-                if items:
-                    for i in items[:5]: # 5개까지 표시
-                        title = i.get('bidNtceNm', '제목없음')
-                        link = i.get('bidNtceDtlUrl', '#')
-                        date = i.get('bidNtceDt', '')[:10]
-                        msg += f"• [{date}] {title}\n   🔗 {link}\n"
-                else:
-                    msg += "• 검색된 공고가 없습니다.\n"
-            except:
-                if "SERVICE KEY" in res.text:
-                    msg += "⚠️ 키 승인 대기 중 (잠시 후 다시 시도)\n"
-                else:
-                    msg += "• 데이터 조회 실패\n"
+            msg += "• 서버 점검 중\n"
     except Exception as e:
-        msg += f"• 접속 오류: {str(e)[:15]}\n"
-        
-    return msg
+        msg += f"• 나라장터 접속 오류\n"
 
-# 2. 경제 뉴스 (부동산 & 주식 - 2줄 요약)
-def get_economy():
-    msg = ""
+    msg += "\n--------------------------------\n\n"
+
+    # (2) 인기통 (AI 검색 활용)
+    msg += "🔥 [인기통 폴리싱 관련 글 (AI 검색)]\n"
+    # AI에게 인기통 사이트를 뒤지라고 시킵니다.
+    inkitong_result = ask_perplexity(
+        "당신은 구인구직 정보 검색 비서입니다.",
+        "웹사이트 '인기통(inkitong.com)' 또는 한국 건설 관련 커뮤니티에서 '폴리싱' 또는 '바닥 시공' 관련 최신 게시글이나 구인 정보를 3~5개 찾아줘.\n반드시 '글 제목'과 '해당 글의 링크(URL)'를 함께 리스트 형식으로 출력해줘."
+    )
+    msg += inkitong_result
     
-    # (1) 부동산 주요 뉴스
-    msg += "🏠 [부동산 주요 뉴스 Top 5]\n"
-    try:
-        url = "https://news.google.com/rss/search?q=부동산+시장&hl=ko&gl=KR&ceid=KR:ko"
-        res = requests.get(url, headers=HEADERS, timeout=10)
-        soup = BeautifulSoup(res.content, 'xml')
-        items = soup.find_all('item')[:5]
-        
-        for i, item in enumerate(items, 1):
-            title = item.title.text
-            # 설명 태그 제거 및 1줄 요약
-            desc = BeautifulSoup(item.description.text, "html.parser").text[:60] + "..."
-            msg += f"{i}. {title}\n   - {desc}\n"
-    except:
-        msg += "• 뉴스를 가져오지 못했습니다.\n"
-
-    msg += "\n"
-
-    # (2) 미국주식 & 해외선물
-    msg += "📈 [미국주식 & 해외선물 Top 5]\n"
-    try:
-        url = "https://news.google.com/rss/search?q=미국주식+OR+해외선물&hl=ko&gl=KR&ceid=KR:ko"
-        res = requests.get(url, headers=HEADERS, timeout=10)
-        soup = BeautifulSoup(res.content, 'xml')
-        items = soup.find_all('item')[:5]
-        
-        for i, item in enumerate(items, 1):
-            title = item.title.text
-            desc = BeautifulSoup(item.description.text, "html.parser").text[:60] + "..."
-            msg += f"{i}. {title}\n   - {desc}\n"
-    except:
-        msg += "• 뉴스를 가져오지 못했습니다.\n"
-        
     return msg
 
-# 3. 인스타그램 (랜덤 딜레이 적용)
+# 2. 경제 뉴스 (AI 브리핑)
+def get_economy():
+    send_telegram("🤖 AI비서가 경제 뉴스를 분석 중입니다...\n(약 10초 소요)")
+    
+    real_estate = ask_perplexity(
+        "당신은 부동산 전문가입니다.",
+        "지금 한국 부동산 시장(매매, 전세, 정책) 관련 가장 중요한 최신 뉴스 5개를 선정해서, 각 뉴스마다 핵심 내용을 2줄로 요약해줘."
+    )
+    stocks = ask_perplexity(
+        "당신은 주식 전문가입니다.",
+        "미국 주식 시장 및 해외 선물 최신 동향 뉴스 5개를 선정해서, 각 뉴스마다 핵심 내용을 2줄로 요약해줘."
+    )
+    
+    msg = f"🏠 [부동산 주요사항 5선]\n{real_estate}\n\n"
+    msg += f"--------------------------------\n\n"
+    msg += f"📈 [미국주식 & 해외선물 5선]\n{stocks}"
+    
+    return msg
+
+# 3. 인스타그램 (링크 포함)
 def check_instagram():
     global seen_instagram
-    # 검색어: 콘크리트폴리싱 (태그 검색)
     url = "https://imginn.org/tags/콘크리트폴리싱/"
-    
     try:
         res = requests.get(url, headers=HEADERS, timeout=15)
         soup = BeautifulSoup(res.text, 'html.parser')
-        
-        # 새 게시물 찾기
         new_posts = []
-        items = soup.select('.item') # 게시물 목록
+        items = soup.select('.item')
         
-        for post in items[:5]: # 최신 5개만 확인
+        for post in items[:5]:
             try:
                 link_tag = post.find('a')
                 if link_tag:
                     link = "https://imginn.org" + link_tag['href']
-                    # 이미지 설명(캡션) 가져오기 시도
                     caption = post.find('img')['alt'] if post.find('img') else "내용 없음"
                     
                     if link not in seen_instagram:
                         seen_instagram.add(link)
-                        # '문의' 라는 단어가 있거나 처음 보는 글이면 알림
                         if "문의" in caption or "질문" in caption or len(seen_instagram) <= 5:
-                            new_posts.append(f"📸 [인스타 새 글]\n{caption[:30]}...\n🔗 {link}")
-            except:
-                continue
-                
+                            post_msg = f"📸 [인스타 새 글 감지]\n\n📝 내용: {caption[:40]}...\n\n🔗 바로가기: {link}"
+                            new_posts.append(post_msg)
+            except: continue
+            
         if new_posts:
-            for p in new_posts:
-                send_telegram(p)
-                
-    except Exception as e:
-        print(f"인스타 접속 오류: {e}")
+            for p in new_posts: send_telegram(p)
+    except: pass
 
-# 인스타그램 타이머 (사람인 척 랜덤 시간)
+# 인스타 타이머
 def instagram_timer():
     while True:
         check_instagram()
-        
-        # 1시간(3600초) + 0분~10분(0~600초) 랜덤 추가
         delay = 3600 + random.randint(0, 600)
-        
-        # 딜레이 시간 계산해서 로그 출력 (서버 기록용)
-        next_time = datetime.now() + timedelta(seconds=delay)
-        print(f"인스타 다음 확인: {next_time.strftime('%H:%M:%S')} (딜레이 {delay}초)")
-        
+        print(f"인스타 다음 확인: {delay}초 뒤")
         time.sleep(delay)
 
-# 4. 텔레그램 전송
 def send_telegram(text):
-    try:
-        requests.get(f"https://api.telegram.org/bot{TOKEN}/sendMessage", params={"chat_id": CHAT_ID, "text": text}, timeout=10)
-    except:
-        pass
+    try: requests.get(f"https://api.telegram.org/bot{TOKEN}/sendMessage", params={"chat_id": CHAT_ID, "text": text}, timeout=10)
+    except: pass
 
-# 5. 봇 실행 및 명령어 감시
 def monitor_commands():
     last_id = 0
-    print("🚀 봇 최종 통합본 시작")
-    send_telegram("🚀 봇 업데이트 완료!\n\n1. /정보 : 나라장터 공사\n2. /경제 : 부동산/주식 (2줄 요약)\n3. 인스타 : 1시간+@ 랜덤 간격 자동 감시 중")
+    print("🚀 AI 봇 시작")
+    send_telegram("🚀 봇 업데이트 완료!\n이제 '인기통' 정보도 AI가 찾아옵니다.\n/정보 명령어를 눌러보세요.")
     
     while True:
         try:
@@ -174,17 +175,12 @@ def monitor_commands():
                 last_id = up["update_id"]
                 txt = up.get("message", {}).get("text", "")
                 
-                if txt == "/?":
-                    send_telegram("❓ [메뉴]\n/정보 : 나라장터(공사)\n/경제 : 부동산, 주식 뉴스")
-                elif txt == "/정보":
-                    send_telegram(get_info())
-                elif txt == "/경제":
-                    send_telegram(get_economy())
+                if txt == "/?": send_telegram("❓ 메뉴\n/정보: 나라장터 + 인기통(AI)\n/경제: AI 뉴스 브리핑")
+                elif txt == "/정보": send_telegram(get_info())
+                elif txt == "/경제": send_telegram(get_economy())
             time.sleep(1)
-        except:
-            time.sleep(5)
+        except: time.sleep(5)
 
 if __name__ == "__main__":
-    # 인스타그램 감시를 별도 쓰레드로 실행 (봇과 동시에 돔)
     threading.Thread(target=instagram_timer, daemon=True).start()
     monitor_commands()
