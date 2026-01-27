@@ -23,6 +23,9 @@ NAVER_CLIENT_SECRET = 'ffJg82MJO2'
 # 이미 본 글은 다시 안 보냄
 seen_links = set()
 
+# ★ [NEW] 봇이 찾은 최신 견적을 저장해두는 메모장
+latest_lead_report = "🔍 아직 수집된 견적 문의가 없습니다. (잠시 후 자동 업데이트됨)"
+
 # 텔레그램 전송
 def send_telegram(text, target_id=None):
     if target_id is None: target_id = GROUP_ID
@@ -54,7 +57,6 @@ def search_naver(query):
         "X-Naver-Client-Id": NAVER_CLIENT_ID,
         "X-Naver-Client-Secret": NAVER_CLIENT_SECRET
     }
-    # 블로그(blog), 카페(cafearticle), 웹문서(webkr)
     for category in ['blog', 'cafearticle', 'webkr']:
         url = f"https://openapi.naver.com/v1/search/{category}.json"
         params = { "query": query, "display": 5, "start": 1, "sort": "date" }
@@ -70,11 +72,10 @@ def search_naver(query):
         except: pass
     return results
 
-# --- [핵심: 돌 바닥 전용 감시] ---
+# --- [핵심: 돌 바닥 전용 감시 + 메모 저장] ---
 def check_naver_leads_smart():
-    global seen_links
+    global seen_links, latest_lead_report # 전역 변수 사용 선언
     
-    # 마루/후로링 제외하고 콘크리트/석재 위주
     keywords = [
         "콘크리트 폴리싱 견적", "바닥 면갈이 업체", "도끼다시 연마 광택", 
         "에폭시 제거후 폴리싱", "테라조 복원 비용", "상가바닥 노출 콘크리트 시공",
@@ -105,7 +106,7 @@ def check_naver_leads_smart():
         "2. 오직 **'콘크리트', '도끼다시', '테라조', '에폭시 제거', '면갈이'** 관련 견적 문의만 찾으세요.\n"
         "3. 단순 광고글은 무시하고, 실제 견적 요청이나 업체 추천 글만 골라내세요.\n"
         "결과가 있다면 아래 형식으로 요약해주세요. (없으면 '없음' 출력)\n\n"
-        "🚨 **[콘크리트/석재] 견적 문의:**\n"
+        "🚨 **[콘크리트/석재] 견적 문의 발견:**\n"
         "1. **글 제목**\n"
         "   - 📝 **내용:** (핵심 요약)\n"
         "   - 🔗 **링크:** (URL)\n"
@@ -114,7 +115,12 @@ def check_naver_leads_smart():
     ai_result = ask_perplexity("콘크리트 전문 영업 비서", prompt_text)
     
     if ai_result and "없음" not in ai_result and len(ai_result) > 20:
+        # 1. 30분 알림 보내기
         send_telegram(f"📢 [실시간 콘크리트/면갈이 문의]\n\n{ai_result}")
+        
+        # 2. ★ [NEW] 최신 결과 저장해두기 (나중에 /정보 칠 때 보여줌)
+        timestamp = datetime.now().strftime('%m월 %d일 %H:%M')
+        latest_lead_report = f"🗓 **[{timestamp} 기준] 최신 견적 리포트**\n{ai_result}"
 
 # 30분 타이머
 def smart_timer():
@@ -123,12 +129,13 @@ def smart_timer():
         check_naver_leads_smart()
         time.sleep(1800)
 
-# 수동 정보 검색
+# --- [정보 통합 화면] ---
 def get_info():
-    msg = "📋 [공공 입찰 정보]\n\n"
+    global latest_lead_report
+    msg = "📋 **[종합 정보 브리핑]**\n\n"
     
     # 1. 나라장터
-    msg += "🏛️ [나라장터(G2B) - 폴리싱]\n"
+    msg += "🏛️ **[나라장터(G2B) - 폴리싱]**\n"
     try:
         end_date = datetime.now().strftime('%Y%m%d0000')
         start_date = (datetime.now() - timedelta(days=90)).strftime('%Y%m%d0000')
@@ -141,18 +148,27 @@ def get_info():
         else: msg += "• 검색된 공고 없음\n"
     except: msg += "• 접속 실패\n"
     
-    # 2. 학교장터 (바로가기만 제공)
-    msg += "\n🏫 [학교장터(S2B) 바로가기]\n"
+    # 2. 학교장터
+    msg += "\n🏫 **[학교장터(S2B) 바로가기]**\n"
     msg += "🔗 https://www.s2b.kr/ (검색어: 도끼다시, 면갈이, 테라조)\n"
 
-    # 3. 인기통 구인
-    msg += "\n🔥 [인기통/카페 구인]\n"
-    prompt = "사이트 'inkitong.com'에서 '콘크리트 폴리싱' 구인 글 2개만 찾아줘."
-    msg += ask_perplexity("구인 검색", prompt) or "검색 실패"
+    # 3. 인기통 구인 (★ 잡소리 제거 버전)
+    msg += "\n🔥 **[인기통/카페 구인]**\n"
+    prompt = (
+        "사이트 'inkitong.com'에서 '콘크리트 폴리싱' 구인 글 2개를 찾아줘. "
+        "만약 없거나 불확실하면 사족 달지 말고 딱 한 마디만 해: '• 최근 올라온 구인 공고가 없습니다.'"
+    )
+    search_result = ask_perplexity("구인 검색", prompt)
+    if not search_result: search_result = "• 검색 실패"
+    msg += f"{search_result}\n"
+    
+    # 4. ★ [NEW] 봇이 찾은 최신 웹 견적 (30분 리포트 내역)
+    msg += "\n-----------------------\n"
+    msg += f"📢 **[실시간 웹 견적 감지 현황]**\n{latest_lead_report}"
     
     return msg
 
-# ★ [복구 완료] 예전과 똑같은 리스트 형식 경제 뉴스
+# 경제 뉴스 (리스트 형식 유지)
 def get_economy():
     real_estate = ask_perplexity("부동산 전문가", "한국 부동산 시장(매매/전세/정책) 최신 뉴스 5개. '1. 제목: 내용' 형식으로 리스트업 해줘.")
     stocks = ask_perplexity("주식 전문가", "미국 주식 및 해외 선물 최신 동향 5개. '1. 제목: 내용' 형식으로 리스트업 해줘.")
@@ -160,7 +176,7 @@ def get_economy():
 
 def monitor_commands():
     last_id = 0
-    send_telegram("🚀 [봇 업데이트] 경제 뉴스 브리핑 기능이 정상 복구되었습니다!")
+    send_telegram("🚀 [봇 업데이트 완료]\n1. 구인정보 잡소리 제거\n2. /정보 입력 시 30분 리포트 내용도 함께 표시됩니다.")
     while True:
         try:
             res = requests.get(f"https://api.telegram.org/bot{TOKEN}/getUpdates", params={"offset": last_id + 1, "timeout": 20}).json()
@@ -172,7 +188,7 @@ def monitor_commands():
                 if text == "/?": send_telegram("메뉴: /정보, /경제", chat_id)
                 elif text == "/정보": send_telegram(get_info(), chat_id)
                 elif text == "/경제": 
-                    send_telegram("🤖 뉴스를 수집 중입니다... (약 10초 소요)", chat_id)
+                    send_telegram("🤖 뉴스를 수집 중입니다...", chat_id)
                     send_telegram(get_economy(), chat_id)
             time.sleep(1)
         except: time.sleep(5)
