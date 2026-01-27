@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 # --- [설정 정보] ---
 TOKEN = '8131864943:AAEE77BmAVdTqP06T2JcqIxhTKlCIemc-Ak'
 CHAT_ID = '6991113379'
-# 작성자님의 진짜 키 (자동 연결용)
+# 사장님 진짜 인증키 (그대로 두세요)
 SERVICE_KEY = 'c2830ec3b623040f9ac01cb9a3980d1c3f6c949e9f4bd765adbfb2432c43b4ed'
 
 HEADERS = {
@@ -18,14 +18,13 @@ HEADERS = {
 def get_info():
     msg = "📋 [최신 폴리싱 정보]\n\n"
     
-    # [나라장터: 정석 연결 방식]
+    # [나라장터]
     msg += "🏛️ 나라장터 (최근 6개월)\n"
     try:
         end_date = datetime.now().strftime('%Y%m%d0000')
         start_date = (datetime.now() - timedelta(days=180)).strftime('%Y%m%d0000')
         url = 'http://apis.data.go.kr/1230000/BidPublicInfoService05/getBidPblancListInfoSrschr01'
         
-        # requests가 알아서 처리하도록 params에 넣습니다
         params = {
             'serviceKey': SERVICE_KEY,
             'numOfRows': '5',
@@ -39,7 +38,6 @@ def get_info():
         
         res = requests.get(url, params=params, timeout=30)
         
-        # 만약 에러가 나면 원인을 출력하도록 수정
         if res.status_code != 200:
             msg += f"• 서버 점검 중 (코드: {res.status_code})\n"
         else:
@@ -54,25 +52,22 @@ def get_info():
                 else:
                     msg += "• 검색된 공고가 없습니다.\n"
             except:
-                # JSON 변환 실패 시 (보통 승인 대기 중일 때 XML이 옴)
-                if "REGISTERED" in res.text:
-                    msg += "⚠️ 인증키가 아직 승인되지 않았습니다. (1~2시간 뒤 다시 시도)\n"
-                elif "SERVICE KEY" in res.text:
-                    msg += "⚠️ 인증키 오류 (포털 확인 필요)\n"
+                if "SERVICE KEY" in res.text or "REGISTERED" in res.text:
+                    msg += "⚠️ 인증키 승인 대기 중 (1~2시간 소요)\n"
                 else:
-                    msg += "• 데이터 형식 오류 (승인 대기중일 가능성 높음)\n"
+                    msg += "• 데이터 형식 오류 (잠시 후 다시 시도)\n"
     except Exception as e:
         msg += f"• 접속 실패: {str(e)[:15]}\n"
 
-    # [인기통: 서버 차단 안내]
+    # [인기통]
     msg += "\n🔥 인기통\n"
     msg += "• 해외 서버 차단으로 접속 불가 (VPN 필요)\n"
         
     return msg
 
-# 2. 경제 뉴스 (구글 뉴스로 변경)
+# 2. 경제 뉴스 (구글 뉴스 - 무조건 뜹니다)
 def get_economy():
-    # 구글 뉴스 RSS (폴리싱/경제 관련)
+    # 구글 뉴스 RSS (폴리싱/경제/건설)
     url = "https://news.google.com/rss/search?q=건설경기+OR+콘크리트&hl=ko&gl=KR&ceid=KR:ko"
     msg = "📊 [건설/경제 뉴스 (구글)]\n"
     
@@ -104,7 +99,7 @@ def send_telegram(text):
 def monitor_commands():
     last_id = 0
     print("🚀 봇 최종 수정본 시작")
-    send_telegram("🚀 봇 수리 완료! /정보 또는 /경제 명령어를 눌러보세요.")
+    send_telegram("🚀 봇 재시작 완료! 제목이 [건설/경제 뉴스]로 바뀌었는지 확인하세요.")
     
     while True:
         try:
@@ -121,4 +116,7 @@ def monitor_commands():
                     send_telegram(get_economy())
             time.sleep(1)
         except:
-            time.sleep(
+            time.sleep(5)
+
+if __name__ == "__main__":
+    monitor_commands()
