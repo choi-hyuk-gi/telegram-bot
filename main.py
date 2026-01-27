@@ -13,7 +13,7 @@ CHAT_ID = '6991113379'
 # 1. 나라장터 키 (공사 조회용)
 SERVICE_KEY = 'c2830ec3b623040f9ac01cb9a3980d1c3f6c949e9f4bd765adbfb2432c43b4ed'
 
-# 2. 퍼플렉시티 키 (혹시 새로 받으셨으면 이걸 바꿔주세요!)
+# 2. 퍼플렉시티 키 (사장님 키 확인 완료)
 PPLX_API_KEY = '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'
 
 HEADERS = {
@@ -22,12 +22,12 @@ HEADERS = {
 
 seen_instagram = set()
 
-# --- [AI 기능: 정밀 진단 모드] ---
+# --- [AI 기능: 모델 이름 수정 완료 (sonar-pro)] ---
 def ask_perplexity(system_role, user_prompt):
     url = "https://api.perplexity.ai/chat/completions"
     
     payload = {
-        "model": "llama-3.1-sonar-large-128k-online", 
+        "model": "sonar-pro", # ★ 여기가 핵심! 최신 모델명으로 변경 ★
         "messages": [
             { "role": "system", "content": system_role },
             { "role": "user", "content": user_prompt }
@@ -42,9 +42,9 @@ def ask_perplexity(system_role, user_prompt):
     try:
         response = requests.post(url, json=payload, headers=headers, timeout=60)
         
-        # ★ 여기가 핵심: 에러가 나면 "왜 안 되는지" 내용을 그대로 보여줌 ★
+        # 에러 발생 시 내용 출력
         if response.status_code != 200:
-            return f"🚨 [AI 거절] 이유: {response.text}"
+            return f"🚨 [AI 오류] {response.text}"
             
         result = response.json()
         return result['choices'][0]['message']['content']
@@ -104,7 +104,7 @@ def get_info():
 
 # 2. 경제 뉴스 (AI 브리핑)
 def get_economy():
-    send_telegram("🤖 AI가 상태를 정밀 진단 중입니다... (에러 메시지 확인용)")
+    send_telegram("🤖 AI가 최신 뉴스를 브리핑합니다... (10초 소요)")
     
     real_estate = ask_perplexity(
         "당신은 부동산 전문가입니다.",
@@ -159,8 +159,8 @@ def send_telegram(text):
 
 def monitor_commands():
     last_id = 0
-    print("🚀 진단 봇 시작")
-    send_telegram("🚀 봇 업데이트 완료!\n이제 /경제 를 누르면 AI가 왜 안 되는지 영문 에러를 알려줍니다.")
+    print("🚀 최종 봇 시작")
+    send_telegram("🚀 봇 업데이트 완료! 모델명을 최신(sonar-pro)으로 교체했습니다.")
     
     while True:
         try:
