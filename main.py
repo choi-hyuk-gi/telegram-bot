@@ -20,7 +20,7 @@ PPLX_API_KEY = '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'
 NAVER_CLIENT_ID = '7D1q3B5fpC5O4fxVGNmD'
 NAVER_CLIENT_SECRET = 'ffJg82MJO2'
 
-# 이미 본 글은 다시 안 보냄 (중복 방지)
+# 이미 본 글은 다시 안 보냄
 seen_links = set()
 
 # 텔레그램 전송
@@ -74,11 +74,11 @@ def search_naver(query):
 def check_naver_leads_smart():
     global seen_links
     
-    # ★ 수정됨: 마루/후로링 제외하고 콘크리트/석재 위주로 세팅
+    # 마루/후로링 제외하고 콘크리트/석재 위주
     keywords = [
         "콘크리트 폴리싱 견적", "바닥 면갈이 업체", "도끼다시 연마 광택", 
         "에폭시 제거후 폴리싱", "테라조 복원 비용", "상가바닥 노출 콘크리트 시공",
-        "학교 도끼다시 연마", "학교 테라조 공사", # 학교는 돌 바닥만
+        "학교 도끼다시 연마", "학교 테라조 공사", 
         "관공서 바닥 면갈이"
     ]
     
@@ -91,10 +91,8 @@ def check_naver_leads_smart():
                 seen_links.add(item['link'])
 
     if not raw_leads:
-        # print("-> 새 글 없음")
         return
 
-    # AI에게 보낼 데이터
     candidates = raw_leads[:15]
     
     prompt_text = "다음은 웹에서 수집한 바닥 공사 관련 최신 글입니다.\n\n"
@@ -113,7 +111,6 @@ def check_naver_leads_smart():
         "   - 🔗 **링크:** (URL)\n"
     )
 
-    # print(f"-> AI 분석 요청 ({len(candidates)}개)...")
     ai_result = ask_perplexity("콘크리트 전문 영업 비서", prompt_text)
     
     if ai_result and "없음" not in ai_result and len(ai_result) > 20:
@@ -155,12 +152,15 @@ def get_info():
     
     return msg
 
+# ★ [복구 완료] 예전과 똑같은 리스트 형식 경제 뉴스
 def get_economy():
-    return ask_perplexity("경제 비서", "한국 부동산/건설 경기 뉴스 3줄 요약.")
+    real_estate = ask_perplexity("부동산 전문가", "한국 부동산 시장(매매/전세/정책) 최신 뉴스 5개. '1. 제목: 내용' 형식으로 리스트업 해줘.")
+    stocks = ask_perplexity("주식 전문가", "미국 주식 및 해외 선물 최신 동향 5개. '1. 제목: 내용' 형식으로 리스트업 해줘.")
+    return f"🏠 [부동산 Top 5]\n{real_estate}\n\n-----------------\n\n📈 [미국주식 Top 5]\n{stocks}"
 
 def monitor_commands():
     last_id = 0
-    send_telegram("🚀 [봇 업데이트] 마루/후로링 제외! 콘크리트/도끼다시/면갈이 집중 모드 시작.")
+    send_telegram("🚀 [봇 업데이트] 경제 뉴스 브리핑 기능이 정상 복구되었습니다!")
     while True:
         try:
             res = requests.get(f"https://api.telegram.org/bot{TOKEN}/getUpdates", params={"offset": last_id + 1, "timeout": 20}).json()
@@ -171,7 +171,9 @@ def monitor_commands():
                 
                 if text == "/?": send_telegram("메뉴: /정보, /경제", chat_id)
                 elif text == "/정보": send_telegram(get_info(), chat_id)
-                elif text == "/경제": send_telegram(get_economy(), chat_id)
+                elif text == "/경제": 
+                    send_telegram("🤖 뉴스를 수집 중입니다... (약 10초 소요)", chat_id)
+                    send_telegram(get_economy(), chat_id)
             time.sleep(1)
         except: time.sleep(5)
 
