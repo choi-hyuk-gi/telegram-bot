@@ -5,13 +5,14 @@ import json
 import re
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
+import urllib.parse
 
 # --- [설정 정보] ---
 TOKEN = '8131864943:AAEE77BmAVdTqP06T2JcqIxhTKlCIemc-Ak'
 OWNER_ID = '6991113379'
 GROUP_ID = '-4663839015' 
 
-# 1. 나라장터 키
+# 1. 나라장터 키 (선생님 키 그대로 사용)
 SERVICE_KEY = 'c2830ec3b623040f9ac01cb9a3980d1c3f6c949e9f4bd765adbfb2432c43b4ed'
 
 # 2. 퍼플렉시티 키
@@ -113,32 +114,45 @@ def smart_timer():
         time.sleep(1800)
         check_naver_leads_smart()
 
-# --- [정보 통합 화면 (리스트 15개 요청)] ---
+# --- [정보 통합 화면 (강제 URL 조립 방식)] ---
 def get_info():
     global latest_lead_report
     msg = "📋 **[종합 정보 브리핑]**\n\n"
     
-    # 1. 나라장터 (바닥보수 15개 긁어오기)
+    # 1. 나라장터 (바닥보수 15개)
     msg += "🏛️ **[나라장터(G2B) - 바닥보수 최근 15개]**\n"
-    # 검색어 하나로 통일해서 많이 가져옴
+    
     target_keyword = "바닥보수"
-    
     end_date = datetime.now().strftime('%Y%m%d0000')
-    start_date = (datetime.now() - timedelta(days=60)).strftime('%Y%m%d0000') # 2달치
-    url = 'https://apis.data.go.kr/1230000/BidPublicInfoService/getBidPblancListInfoCnstwk'
+    start_date = (datetime.now() - timedelta(days=60)).strftime('%Y%m%d0000')
     
-    params = { 
-        'serviceKey': SERVICE_KEY,
-        'numOfRows': '15',     # ★ 여기를 15개로 늘림
-        'pageNo': '1', 
-        'inqryDiv': '1', 
-        'bidNtceNm': target_keyword, 
-        'bidNtceBgnDt': start_date, 
-        'bidNtceEndDt': end_date
+    # [수정] URL을 수동으로 조립 (라이브러리 인코딩 방지)
+    base_url = 'http://apis.data.go.kr/1230000/BidPublicInfoService/getBidPblancListInfoCnstwk'
+    
+    # 쿼리 파라미터 (키 제외)
+    params = {
+        'numOfRows': '15',
+        'pageNo': '1',
+        'inqryDiv': '1',
+        'bidNtceNm': target_keyword,
+        'bidNtceBgnDt': start_date,
+        'bidNtceEndDt': end_date,
+        'type': 'xml'
     }
     
+    # 파라미터 인코딩
+    query_string = urllib.parse.urlencode(params)
+    
+    # ★ 핵심: 서비스키를 맨 앞에 '그대로' 붙여버림 (인코딩 없이)
+    full_url = f"{base_url}?serviceKey={SERVICE_KEY}&{query_string}"
+    
+    # 디버깅용 출력 (PC 화면에서 클릭해보세요)
+    print(f"\n[G2B 접속 시도 URL]: {full_url}\n")
+    
     try:
-        res = requests.get(url, params=params, timeout=15)
+        # verify=False는 SSL 에러 방지용
+        res = requests.get(full_url, timeout=20, verify=False)
+        
         if res.status_code == 200:
             try:
                 root = ET.fromstring(res.content)
@@ -148,16 +162,20 @@ def get_info():
                         name = item.findtext('bidNtceNm')
                         link = item.findtext('bidNtceDtlUrl')
                         date = item.findtext('bidNtceDt')
-                        # 날짜 포맷 예쁘게 (2026-01-28)
                         if date: date = f"({date[4:6]}/{date[6:8]})"
                         else: date = ""
                         
                         msg += f"{i+1}. {name} {date}\n   🔗 {link}\n"
                 else:
-                    msg += "• 검색된 공고가 없습니다.\n"
-            except: msg += "• 데이터 파싱 오류\n"
-        else: msg += f"• 서버 오류 ({res.status_code})\n"
-    except: msg += "• 접속 실패 (타임아웃)\n"
+                    msg += "• 검색된 공고가 없습니다 (조건에 맞는 데이터 0건).\n"
+            except: 
+                msg += "• 데이터는 받았으나 해석 실패 (XML 오류)\n"
+                print(f"응답 내용: {res.text[:100]}")
+        else: 
+            msg += f"• 서버 오류 ({res.status_code})\n"
+            print(f"오류 코드: {res.status_code}, 내용: {res.text[:100]}")
+    except Exception as e: 
+        msg += f"• 접속 실패 (인터넷/서버 문제): {e}\n"
 
     # 2. 학교장터
     msg += "\n🏫 **[학교장터(S2B)]**\n"
@@ -183,8 +201,8 @@ def get_economy():
 
 def monitor_commands():
     last_id = 0
-    print("🚀 봇 재시동: 나라장터 리스트 15개 확장판")
-    send_telegram("🚀 [업데이트 완료] 이제 '/정보'를 누르면 나라장터 '바닥보수' 최근 공고 15개를 한 번에 보여줍니다.")
+    print("🚀 봇 재시동: 나라장터 강제 접속 모드 (URL 수동조립)")
+    send_telegram("🚀 [업데이트 완료] 500 에러 해결을 위해 접속 방식을 변경했습니다.")
     
     while True:
         try:
@@ -196,7 +214,7 @@ def monitor_commands():
                 
                 if text == "/?": send_telegram("메뉴: /정보, /경제", chat_id)
                 elif text == "/정보": 
-                    send_telegram("⏳ 최근 15개 공고를 불러옵니다...", chat_id)
+                    send_telegram("⏳ 나라장터 접속 시도 중... (디버깅 모드)", chat_id)
                     send_telegram(get_info(), chat_id)
                 elif text == "/경제": 
                     send_telegram("🤖 뉴스 수집 중...", chat_id)
