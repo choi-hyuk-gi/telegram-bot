@@ -4,19 +4,20 @@ import threading
 import json
 import re
 from datetime import datetime, timedelta
+import urllib.parse
 
 # --- [설정 정보] ---
 TOKEN = '8131864943:AAEE77BmAVdTqP06T2JcqIxhTKlCIemc-Ak'
 OWNER_ID = '6991113379'
 GROUP_ID = '-4663839015' 
 
-# 1. 나라장터 키
+# 1. 나라장터 키 (타임아웃 해결을 위해 그대로 둠)
 SERVICE_KEY = 'c2830ec3b623040f9ac01cb9a3980d1c3f6c949e9f4bd765adbfb2432c43b4ed'
 
 # 2. 퍼플렉시티 키
 PPLX_API_KEY = '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'
 
-# 3. 네이버 API 키 (사장님 키)
+# 3. 네이버 API 키
 NAVER_CLIENT_ID = '7D1q3B5fpC5O4fxVGNmD'
 NAVER_CLIENT_SECRET = 'ffJg82MJO2'
 
@@ -31,7 +32,8 @@ def send_telegram(text, target_id=None):
     if target_id is None: target_id = GROUP_ID
     try:
         requests.get(f"https://api.telegram.org/bot{TOKEN}/sendMessage", params={"chat_id": target_id, "text": text}, timeout=10)
-    except: pass
+    except Exception as e:
+        print(f"❌ 텔레그램 전송 실패: {e}")
 
 # --- [AI 기능] ---
 def ask_perplexity(system_role, user_prompt):
@@ -46,9 +48,13 @@ def ask_perplexity(system_role, user_prompt):
     headers = { "Authorization": f"Bearer {PPLX_API_KEY}", "Content-Type": "application/json" }
     try:
         response = requests.post(url, json=payload, headers=headers, timeout=60)
-        if response.status_code != 200: return None
+        if response.status_code != 200: 
+            print(f"⚠️ AI 오류: {response.text}")
+            return None
         return response.json()['choices'][0]['message']['content']
-    except: return None
+    except Exception as e:
+        print(f"⚠️ AI 연결 실패: {e}")
+        return None
 
 # --- [네이버 검색 엔진] ---
 def search_naver(query):
@@ -72,9 +78,12 @@ def search_naver(query):
         except: pass
     return results
 
-# --- [핵심: 돌 바닥 전용 감시 + 메모 저장] ---
+# --- [핵심: 돌 바닥 전용 감시 + 무조건 보고] ---
 def check_naver_leads_smart():
-    global seen_links, latest_lead_report # 전역 변수 사용 선언
+    global seen_links, latest_lead_report
+    
+    current_time = datetime.now().strftime('%H:%M')
+    print(f"\n[{current_time}] 🔍 30분 정기 점검 시작...")
     
     keywords = [
         "콘크리트 폴리싱 견적", "바닥 면갈이 업체", "도끼다시 연마 광택", 
@@ -84,16 +93,23 @@ def check_naver_leads_smart():
     ]
     
     raw_leads = []
+    new_cnt = 0
     for key in keywords:
         items = search_naver(key)
         for item in items:
             if item['link'] not in seen_links:
                 raw_leads.append(item)
                 seen_links.add(item['link'])
+                new_cnt += 1
 
+    # 1. 새로운 글이 아예 없을 때 (무조건 보고)
     if not raw_leads:
+        msg = f"⏰ [정기보고 {current_time}]\n지난 30분간 새로 올라온 바닥 시공 관련 글이 없습니다. (정상 작동 중)"
+        print("   -> 💤 발견된 새 글 없음. (보고 전송)")
+        send_telegram(msg)
         return
 
+    print(f"   -> ✨ 새로운 글 {new_cnt}개 발견! AI 분석 중...")
     candidates = raw_leads[:15]
     
     prompt_text = "다음은 웹에서 수집한 바닥 공사 관련 최신 글입니다.\n\n"
@@ -114,45 +130,72 @@ def check_naver_leads_smart():
 
     ai_result = ask_perplexity("콘크리트 전문 영업 비서", prompt_text)
     
+    # 2. 유효한 견적이 있을 때
     if ai_result and "없음" not in ai_result and len(ai_result) > 20:
-        # 1. 30분 알림 보내기
+        print("   -> 📢 유효한 견적 발견! 텔레그램 전송.")
         send_telegram(f"📢 [실시간 콘크리트/면갈이 문의]\n\n{ai_result}")
         
-        # 2. ★ [NEW] 최신 결과 저장해두기 (나중에 /정보 칠 때 보여줌)
         timestamp = datetime.now().strftime('%m월 %d일 %H:%M')
         latest_lead_report = f"🗓 **[{timestamp} 기준] 최신 견적 리포트**\n{ai_result}"
+    
+    # 3. 새 글은 있는데 광고라서 걸러졌을 때 (무조건 보고)
+    else:
+        msg = f"⏰ [정기보고 {current_time}]\n새 글이 {new_cnt}개 있었으나, 광고/홍보성 글이라 제외했습니다."
+        print("   -> 🗑️ AI 분석 결과: 광고로 판단됨. (보고 전송)")
+        send_telegram(msg)
 
 # 30분 타이머
 def smart_timer():
     print("⏳ 콘크리트/면갈이 감지기 가동 (30분 간격)")
+    check_naver_leads_smart() # 켜자마자 한번 실행
     while True:
+        time.sleep(1800) # 1800초 = 30분
         check_naver_leads_smart()
-        time.sleep(1800)
 
 # --- [정보 통합 화면] ---
 def get_info():
     global latest_lead_report
     msg = "📋 **[종합 정보 브리핑]**\n\n"
     
-    # 1. 나라장터
+    # 1. 나라장터 (타임아웃 20초 적용)
     msg += "🏛️ **[나라장터(G2B) - 폴리싱]**\n"
     try:
         end_date = datetime.now().strftime('%Y%m%d0000')
         start_date = (datetime.now() - timedelta(days=90)).strftime('%Y%m%d0000')
-        url = 'http://apis.data.go.kr/1230000/BidPublicInfoService/getBidPblancListInfoCnstwk'
-        params = { 'serviceKey': SERVICE_KEY, 'numOfRows': '3', 'pageNo': '1', 'inqryDiv': '1', 'bidNtceNm': '폴리싱', 'bidNtceBgnDt': start_date, 'bidNtceEndDt': end_date, 'type': 'json' }
-        res = requests.get(url, params=params, timeout=5)
-        items = res.json().get('response', {}).get('body', {}).get('items', [])
-        if items:
-            for i in items: msg += f"• {i.get('bidNtceNm')}\n  🔗 {i.get('bidNtceDtlUrl')}\n"
-        else: msg += "• 검색된 공고 없음\n"
-    except: msg += "• 접속 실패\n"
+        url = 'https://apis.data.go.kr/1230000/BidPublicInfoService/getBidPblancListInfoCnstwk'
+        
+        params = { 
+            'serviceKey': urllib.parse.unquote(SERVICE_KEY),
+            'numOfRows': '3', 
+            'pageNo': '1', 
+            'inqryDiv': '1', 
+            'bidNtceNm': '폴리싱', 
+            'bidNtceBgnDt': start_date, 
+            'bidNtceEndDt': end_date, 
+            'type': 'json' 
+        }
+        
+        res = requests.get(url, params=params, timeout=20)
+        
+        if res.status_code == 200:
+            try:
+                items = res.json().get('response', {}).get('body', {}).get('items', [])
+                if items:
+                    for i in items: msg += f"• {i.get('bidNtceNm')}\n  🔗 {i.get('bidNtceDtlUrl')}\n"
+                else: msg += "• 검색된 공고 없음 (최근 3개월)\n"
+            except:
+                msg += f"• 데이터 파싱 실패\n"
+        else:
+            msg += f"• 서버 오류 ({res.status_code})\n"
+            
+    except:
+        msg += "• 접속 실패 (시간 초과)\n"
     
     # 2. 학교장터
     msg += "\n🏫 **[학교장터(S2B) 바로가기]**\n"
     msg += "🔗 https://www.s2b.kr/ (검색어: 도끼다시, 면갈이, 테라조)\n"
 
-    # 3. 인기통 구인 (★ 잡소리 제거 버전)
+    # 3. 인기통 구인
     msg += "\n🔥 **[인기통/카페 구인]**\n"
     prompt = (
         "사이트 'inkitong.com'에서 '콘크리트 폴리싱' 구인 글 2개를 찾아줘. "
@@ -162,13 +205,13 @@ def get_info():
     if not search_result: search_result = "• 검색 실패"
     msg += f"{search_result}\n"
     
-    # 4. ★ [NEW] 봇이 찾은 최신 웹 견적 (30분 리포트 내역)
+    # 4. 봇이 찾은 최신 웹 견적
     msg += "\n-----------------------\n"
     msg += f"📢 **[실시간 웹 견적 감지 현황]**\n{latest_lead_report}"
     
     return msg
 
-# 경제 뉴스 (리스트 형식 유지)
+# 경제 뉴스
 def get_economy():
     real_estate = ask_perplexity("부동산 전문가", "한국 부동산 시장(매매/전세/정책) 최신 뉴스 5개. '1. 제목: 내용' 형식으로 리스트업 해줘.")
     stocks = ask_perplexity("주식 전문가", "미국 주식 및 해외 선물 최신 동향 5개. '1. 제목: 내용' 형식으로 리스트업 해줘.")
@@ -176,7 +219,9 @@ def get_economy():
 
 def monitor_commands():
     last_id = 0
-    send_telegram("🚀 [봇 업데이트 완료]\n1. 구인정보 잡소리 제거\n2. /정보 입력 시 30분 리포트 내용도 함께 표시됩니다.")
+    print("🚀 봇 시스템 시작 (30분마다 무조건 생존신고 보냄)")
+    send_telegram("🚀 [봇 업데이트 완료]\n이제 30분마다 검색 결과가 없어도 생존 보고를 보냅니다.")
+    
     while True:
         try:
             res = requests.get(f"https://api.telegram.org/bot{TOKEN}/getUpdates", params={"offset": last_id + 1, "timeout": 20}).json()
@@ -185,13 +230,19 @@ def monitor_commands():
                 text = up.get("message", {}).get("text", "")
                 chat_id = up.get("message", {}).get("chat", {}).get("id")
                 
+                print(f"📩 메시지 수신: {text}")
+
                 if text == "/?": send_telegram("메뉴: /정보, /경제", chat_id)
-                elif text == "/정보": send_telegram(get_info(), chat_id)
+                elif text == "/정보": 
+                    send_telegram("⏳ 정보 수집 중입니다... (약 15초)", chat_id)
+                    send_telegram(get_info(), chat_id)
                 elif text == "/경제": 
-                    send_telegram("🤖 뉴스를 수집 중입니다...", chat_id)
+                    send_telegram("🤖 뉴스 수집 중...", chat_id)
                     send_telegram(get_economy(), chat_id)
             time.sleep(1)
-        except: time.sleep(5)
+        except Exception as e: 
+            print(f"폴링 에러: {e}")
+            time.sleep(5)
 
 if __name__ == "__main__":
     threading.Thread(target=smart_timer, daemon=True).start()
